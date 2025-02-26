@@ -1,4 +1,5 @@
-#include "GenericListView.hpp"
+#include "widgets/listview/GenericListView.hpp"
+
 #include "singletons/Theme.hpp"
 #include "widgets/listview/GenericListModel.hpp"
 
@@ -18,13 +19,13 @@ GenericListView::GenericListView()
             auto *item = GenericListItem::fromVariant(index.data());
             item->action();
 
-            emit this->closeRequested();
+            this->requestClose();
         });
 }
 
 void GenericListView::setModel(QAbstractItemModel *model)
 {
-    auto casted = dynamic_cast<GenericListModel *>(model);
+    auto *casted = dynamic_cast<GenericListModel *>(model);
     assert(casted);
     this->setModel(casted);
 }
@@ -42,64 +43,58 @@ void GenericListView::setInvokeActionOnTab(bool value)
 
 bool GenericListView::eventFilter(QObject * /*watched*/, QEvent *event)
 {
-    if (!this->model_)
+    if (this->model_ == nullptr)
+    {
         return false;
+    }
 
     if (event->type() == QEvent::KeyPress)
     {
         auto *keyEvent = static_cast<QKeyEvent *>(event);
         int key = keyEvent->key();
 
-        const QModelIndex &curIdx = this->currentIndex();
-        const int curRow = curIdx.row();
-        const int count = this->model_->rowCount(curIdx);
-
-        if (key == Qt::Key_Enter || key == Qt::Key_Return ||
-            (key == Qt::Key_Tab && this->invokeActionOnTab_))
+        if (key == Qt::Key_Enter || key == Qt::Key_Return)
         {
-            // keep this before the other tab handler
-            if (count <= 0)
-                return true;
-
-            const auto index = this->currentIndex();
-            auto *item = GenericListItem::fromVariant(index.data());
-
-            item->action();
-
-            emit this->closeRequested();
+            this->acceptCompletion();
             return true;
         }
-        else if (key == Qt::Key_Down || key == Qt::Key_Tab)
+
+        if (key == Qt::Key_Tab)
         {
-            if (count <= 0)
-                return true;
+            if (this->invokeActionOnTab_)
+            {
+                this->acceptCompletion();
+            }
+            else
+            {
+                this->focusNextCompletion();
+            }
 
-            const int newRow = (curRow + 1) % count;
-
-            this->setCurrentIndex(curIdx.siblingAtRow(newRow));
             return true;
         }
-        else if (key == Qt::Key_Up ||
-                 (!this->invokeActionOnTab_ && key == Qt::Key_Backtab))
+
+        if (key == Qt::Key_Backtab && !this->invokeActionOnTab_)
         {
-            if (count <= 0)
-                return true;
-
-            int newRow = curRow - 1;
-            if (newRow < 0)
-                newRow += count;
-
-            this->setCurrentIndex(curIdx.siblingAtRow(newRow));
+            this->focusPreviousCompletion();
             return true;
         }
-        else if (key == Qt::Key_Escape)
+
+        if (key == Qt::Key_Down)
         {
-            emit this->closeRequested();
+            this->focusNextCompletion();
             return true;
         }
-        else
+
+        if (key == Qt::Key_Up)
         {
-            return false;
+            this->focusPreviousCompletion();
+            return true;
+        }
+
+        if (key == Qt::Key_Escape)
+        {
+            this->requestClose();
+            return true;
         }
     }
 
@@ -108,22 +103,117 @@ bool GenericListView::eventFilter(QObject * /*watched*/, QEvent *event)
 
 void GenericListView::refreshTheme(const Theme &theme)
 {
-    const QString textCol = theme.window.text.name();
-    const QString bgCol = theme.window.background.name();
+    const auto textCol = theme.window.text.name(QColor::HexArgb);
 
-    const QString selCol =
-        (theme.isLightTheme()
-             ? "#68B1FF"  // Copied from Theme::splits.input.styleSheet
-             : theme.tabs.selected.backgrounds.regular.color().name());
+    auto accentColor = theme.accent;
+    accentColor.setAlpha(100);
+    const auto selCol = accentColor.name(QColor::HexArgb);
 
-    const QString listStyle =
-        QString(
-            "color: %1; background-color: %2; selection-background-color: %3")
-            .arg(textCol)
-            .arg(bgCol)
-            .arg(selCol);
+    const auto listStyle = QStringLiteral(R"(
+        QListView {
+            border: none;
+            color: %1;
+            background: transparent;
+            selection-background-color: %2;
+        }
+
+        QAbstractScrollArea::corner {
+            border: none;
+        }
+
+        QScrollBar {
+            background: transparent;
+        }
+        QScrollBar:vertical {
+            margin-left: 4;
+        }
+        QScrollBar:horizontal {
+            margin-top: 4;
+        }
+
+        QScrollBar::add-line,
+        QScrollBar::sub-line,
+        QScrollBar::left-arrow,
+        QScrollBar::right-arrow,
+        QScrollBar::down-arrow,
+        QScrollBar::up-arrow {
+            width: 0;
+            height: 0;
+        }
+
+        QScrollBar::handle {
+            background: %2;
+            border-radius: 4;
+        }
+        QScrollBar::handle:vertical {
+            min-height: 8;
+            width: 8;
+        }
+        QScrollBar::handle:horizontal {
+            min-width: 8;
+            height: 8;
+        })")
+                               .arg(textCol, selCol);
 
     this->setStyleSheet(listStyle);
+}
+
+bool GenericListView::acceptCompletion()
+{
+    const QModelIndex &curIdx = this->currentIndex();
+    const int count = this->model_->rowCount(curIdx);
+    if (count <= 0)
+    {
+        return false;
+    }
+
+    const auto index = this->currentIndex();
+    auto *item = GenericListItem::fromVariant(index.data());
+
+    item->action();
+
+    this->requestClose();
+
+    return true;
+}
+
+void GenericListView::focusNextCompletion()
+{
+    const QModelIndex &curIdx = this->currentIndex();
+    const int curRow = curIdx.row();
+    const int count = this->model_->rowCount(curIdx);
+    if (count <= 0)
+    {
+        return;
+    }
+
+    const int newRow = (curRow + 1) % count;
+
+    this->setCurrentIndex(curIdx.siblingAtRow(newRow));
+}
+
+void GenericListView::focusPreviousCompletion()
+{
+    const QModelIndex &curIdx = this->currentIndex();
+    const int curRow = curIdx.row();
+    const int count = this->model_->rowCount(curIdx);
+    if (count <= 0)
+    {
+        return;
+    }
+
+    int newRow = curRow - 1;
+    if (newRow < 0)
+    {
+        newRow += count;
+    }
+
+    this->setCurrentIndex(curIdx.siblingAtRow(newRow));
+}
+
+void GenericListView::requestClose()
+{
+    this->closeRequested();
 }
 
 }  // namespace chatterino

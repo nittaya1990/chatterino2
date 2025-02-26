@@ -3,39 +3,23 @@
 #include <QColor>
 #include <QString>
 
+#include <vector>
+
 namespace chatterino {
 
-#ifndef ATTR_UNUSED
-#    ifdef Q_OS_WIN
-#        define ATTR_UNUSED
-#    else
-#        define ATTR_UNUSED __attribute__((unused))
-#    endif
-#endif
+[[maybe_unused]] inline const char *const ANONYMOUS_USERNAME = "justinfan64537";
 
-static const char *ANONYMOUS_USERNAME ATTR_UNUSED = "justinfan64537";
+inline constexpr int TWITCH_MESSAGE_LIMIT = 500;
 
 inline QByteArray getDefaultClientID()
 {
-    return QByteArray("7ue61iz46fz11y3cugd0l3tawb4taal");
+    return QByteArrayLiteral("7ue61iz46fz11y3cugd0l3tawb4taal");
 }
 
-static const std::vector<QColor> TWITCH_USERNAME_COLORS = {
-    {255, 0, 0},      // Red
-    {0, 0, 255},      // Blue
-    {0, 255, 0},      // Green
-    {178, 34, 34},    // FireBrick
-    {255, 127, 80},   // Coral
-    {154, 205, 50},   // YellowGreen
-    {255, 69, 0},     // OrangeRed
-    {46, 139, 87},    // SeaGreen
-    {218, 165, 32},   // GoldenRod
-    {210, 105, 30},   // Chocolate
-    {95, 158, 160},   // CadetBlue
-    {30, 144, 255},   // DodgerBlue
-    {255, 105, 180},  // HotPink
-    {138, 43, 226},   // BlueViolet
-    {0, 255, 127},    // SpringGreen
-};
+extern const std::vector<QColor> TWITCH_USERNAME_COLORS;
+
+extern const QStringList TWITCH_DEFAULT_COMMANDS;
+
+extern const QStringList TWITCH_WHISPER_COMMANDS;
 
 }  // namespace chatterino
