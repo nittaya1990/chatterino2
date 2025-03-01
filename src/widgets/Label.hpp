@@ -27,12 +27,15 @@ public:
     bool getHasOffset() const;
     void setHasOffset(bool hasOffset);
 
-protected:
-    virtual void scaleChangedEvent(float scale_) override;
-    virtual void paintEvent(QPaintEvent *) override;
+    bool getWordWrap() const;
+    void setWordWrap(bool wrap);
 
-    virtual QSize sizeHint() const override;
-    virtual QSize minimumSizeHint() const override;
+protected:
+    void scaleChangedEvent(float scale_) override;
+    void paintEvent(QPaintEvent *) override;
+
+    QSize sizeHint() const override;
+    QSize minimumSizeHint() const override;
 
 private:
     void updateSize();
@@ -43,6 +46,7 @@ private:
     QSize preferedSize_;
     bool centered_ = false;
     bool hasOffset_ = true;
+    bool wordWrap_ = false;
 
     pajlada::Signals::SignalHolder connections_;
 };
