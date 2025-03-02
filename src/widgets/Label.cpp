@@ -1,4 +1,6 @@
-#include "Label.hpp"
+#include "widgets/Label.hpp"
+
+#include "Application.hpp"
 
 #include <QPainter>
 
@@ -14,9 +16,11 @@ Label::Label(BaseWidget *parent, QString text, FontStyle style)
     , text_(std::move(text))
     , fontStyle_(style)
 {
-    this->connections_.managedConnect(getFonts()->fontChanged, [this] {
-        this->updateSize();
-    });
+    this->connections_.managedConnect(getApp()->getFonts()->fontChanged,
+                                      [this] {
+                                          this->updateSize();
+                                      });
+    this->updateSize();
 }
 
 const QString &Label::getText() const
@@ -60,6 +64,18 @@ void Label::setHasOffset(bool hasOffset)
     this->hasOffset_ = hasOffset;
     this->updateSize();
 }
+
+bool Label::getWordWrap() const
+{
+    return this->wordWrap_;
+}
+
+void Label::setWordWrap(bool wrap)
+{
+    this->wordWrap_ = wrap;
+    this->update();
+}
+
 void Label::setFontStyle(FontStyle style)
 {
     this->fontStyle_ = style;
@@ -85,21 +101,10 @@ void Label::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
 
-    qreal deviceDpi =
-#ifdef Q_OS_WIN
-        this->devicePixelRatioF();
-#else
-        1.0;
-#endif
-
-    QFontMetrics metrics = getFonts()->getFontMetrics(
-        this->getFontStyle(),
-        this->scale() * 96.f /
-            std::max<float>(0.01, this->logicalDpiX() * deviceDpi));
-    painter.setFont(getFonts()->getFont(
-        this->getFontStyle(),
-        this->scale() * 96.f /
-            std::max<float>(0.02, this->logicalDpiX() * deviceDpi)));
+    QFontMetrics metrics = getApp()->getFonts()->getFontMetrics(
+        this->getFontStyle(), this->scale());
+    painter.setFont(
+        getApp()->getFonts()->getFont(this->getFontStyle(), this->scale()));
 
     int offset = this->getOffset();
 
@@ -114,7 +119,14 @@ void Label::paintEvent(QPaintEvent *)
     painter.setBrush(this->palette().windowText());
 
     QTextOption option(alignment);
-    option.setWrapMode(QTextOption::NoWrap);
+    if (this->wordWrap_)
+    {
+        option.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    }
+    else
+    {
+        option.setWrapMode(QTextOption::NoWrap);
+    }
     painter.drawText(textRect, this->text_, option);
 
 #if 0
@@ -126,7 +138,7 @@ void Label::paintEvent(QPaintEvent *)
 void Label::updateSize()
 {
     QFontMetrics metrics =
-        getFonts()->getFontMetrics(this->fontStyle_, this->scale());
+        getApp()->getFonts()->getFontMetrics(this->fontStyle_, this->scale());
 
     int width =
         metrics.horizontalAdvance(this->text_) + (2 * this->getOffset());

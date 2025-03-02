@@ -1,82 +1,135 @@
 ---
-name: Test
+name: Test Ubuntu
 
 on:
   pull_request:
+  workflow_dispatch:
+  merge_group:
+  push:
+    branches:
+      - master
+      - main
+
+env:
+  TWITCH_PUBSUB_SERVER_TAG: v1.0.8
+  HTTPBOX_TAG: v0.2.1
+  QT_QPA_PLATFORM: minimal
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ${{ matrix.os }}
+    name: "Test ${{ matrix.os }}, Qt ${{ matrix.qt-version }}"
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
     strategy:
       matrix:
-        os: [ubuntu-20.04]
+        include:
+          - os: "ubuntu-22.04"
+            container: ghcr.io/chatterino/chatterino2-build-ubuntu-22.04:latest
+            qt-version: 6.7.1
+            plugins: true
       fail-fast: false
+    env:
+      C2_PLUGINS: ${{ matrix.plugins }}
 
     steps:
-      - uses: actions/checkout@v2.3.4
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Cache Qt
-        id: cache-qt
-        uses: actions/cache@v2.1.6
-        with:
-          path: ../Qt
-          key: ${{ runner.os }}-QtCache-20201005
-
-      # LINUX
-      - name: Install p7zip (Ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: sudo apt-get update && sudo apt-get -y install p7zip-full
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v2
-        with:
-          aqtversion: '==1.1.1'
-          cached: ${{ steps.cache-qt.outputs.cache-hit }}
-          extra: --external 7z
-
-      # LINUX
-      - name: Install dependencies (Ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-            sudo apt-get update
-            sudo apt-get -y install \
-                cmake \
-                rapidjson-dev \
-                libssl-dev \
-                libboost-dev \
-                libboost-system-dev \
-                libboost-filesystem-dev \
-                libpulse-dev \
-                libxkbcommon-x11-0 \
-                libgstreamer-plugins-base1.0-0 \
-                build-essential \
-                libgl1-mesa-dev \
-                libxcb-icccm4 \
-                libxcb-image0 \
-                libxcb-keysyms1 \
-                libxcb-render-util0 \
-                libxcb-xinerama0 \
-                libgtest-dev
-
       - name: Create build directory (Ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
+        run: mkdir build-test
+
+      - name: Install dependencies
         run: |
-            mkdir build-test
-        shell: bash
+          sudo apt update
+          sudo DEBIAN_FRONTEND=noninteractive apt -y --no-install-recommends install \
+            libbenchmark-dev gcovr gnupg
+
+      - name: Install httpbox
+        run: |
+          curl -L -o httpbox.tar.xz "https://github.com/Chatterino/httpbox/releases/download/${{ env.HTTPBOX_TAG }}/httpbox-x86_64-unknown-linux-gnu.tar.xz"
+          tar -xJf httpbox.tar.xz
+          mv ./httpbox-x86_64-unknown-linux-gnu/httpbox /usr/local/bin
+        working-directory: /tmp
 
       - name: Build (Ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
         run: |
-            cmake -DBUILD_TESTS=On -DBUILD_APP=OFF ..
-            cmake --build . --config Release
+          cmake \
+            -DBUILD_TESTS=On \
+            -DBUILD_BENCHMARKS=On \
+            -DBUILD_APP=OFF \
+            -DCHATTERINO_PLUGINS="$C2_PLUGINS" \
+            -DCMAKE_PREFIX_PATH="$Qt6_DIR/lib/cmake" \
+            -DCHATTERINO_STATIC_QT_BUILD=On \
+            -DCHATTERINO_GENERATE_COVERAGE=On \
+            -DCMAKE_BUILD_TYPE=Debug \
+            ..
+          cmake --build . -j $(nproc)
         working-directory: build-test
-        shell: bash
 
-      - name: Test (Ubuntu)
-        if: startsWith(matrix.os, 'ubuntu')
+      - name: Download and extract Twitch PubSub Server Test
         run: |
-            ./bin/chatterino-test --platform minimal
+          mkdir pubsub-server-test
+          curl -L -o pubsub-server.tar.gz "https://github.com/Chatterino/twitch-pubsub-server-test/releases/download/${{ env.TWITCH_PUBSUB_SERVER_TAG }}/server-${{ env.TWITCH_PUBSUB_SERVER_TAG }}-linux-amd64.tar.gz"
+          tar -xzf pubsub-server.tar.gz -C pubsub-server-test
+          rm pubsub-server.tar.gz
+          cd pubsub-server-test
+          cd ..
+
+      - name: Test
+        timeout-minutes: 30
+        run: |
+          httpbox --port 9051 &
+          cd ../pubsub-server-test
+          ./server 127.0.0.1:9050 &
+          cd ../build-test
+          ctest --repeat until-pass:4 --output-on-failure
         working-directory: build-test
-        shell: bash
+
+      - name: Run benchmark
+        timeout-minutes: 2
+        run: |
+          ./bin/chatterino-benchmark --benchmark_min_time=1x
+        working-directory: build-test
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5.4.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          plugins: gcov
+          fail_ci_if_error: true
+          verbose: true
+
+  eventsub-test:
+    name: "EventSub python test"
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo DEBIAN_FRONTEND=noninteractive apt -y --no-install-recommends install \
+            python3 python3-venv clang-18 clang-format-18 libclang-18-dev
+          echo "LIBCLANG_LIBRARY_FILE=/usr/lib/x86_64-linux-gnu/libclang-18.so" >> "$GITHUB_ENV"
+          sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-18 42
+          sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-18 42
+
+      - name: Setup virtual environment
+        run: |
+          python3 -m venv venv
+          ./venv/bin/pip3 install -r requirements.txt
+          ./venv/bin/pip3 install -r requirements-dev.txt
+        working-directory: lib/twitch-eventsub-ws/ast
+
+      - name: Run pytest
+        run: |
+          ./venv/bin/pytest
+        working-directory: lib/twitch-eventsub-ws/ast
