@@ -1,11 +1,11 @@
 #pragma once
 
-#include <QTimer>
 #include <pajlada/signals/signal.hpp>
+#include <QTimer>
 
 namespace chatterino {
 
-constexpr long unsigned gifFrameLength = 33;
+constexpr long unsigned GIF_FRAME_LENGTH = 20;
 
 class GIFTimer
 {
@@ -18,9 +18,21 @@ public:
         return this->position_;
     }
 
+    void registerOpenOverlayWindow()
+    {
+        this->openOverlayWindows_++;
+    }
+
+    void unregisterOpenOverlayWindow()
+    {
+        assert(this->openOverlayWindows_ >= 1);
+        this->openOverlayWindows_--;
+    }
+
 private:
     QTimer timer;
     long unsigned position_{};
+    size_t openOverlayWindows_ = 0;
 };
 
 }  // namespace chatterino

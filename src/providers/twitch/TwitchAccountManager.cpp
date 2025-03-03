@@ -1,11 +1,14 @@
 #include "providers/twitch/TwitchAccountManager.hpp"
 
+#include "Application.hpp"
+#include "common/Args.hpp"
 #include "common/Common.hpp"
 #include "common/QLogging.hpp"
+#include "providers/twitch/api/Helix.hpp"
 #include "providers/twitch/TwitchAccount.hpp"
 #include "providers/twitch/TwitchCommon.hpp"
-#include "providers/twitch/api/Helix.hpp"
-#include "providers/twitch/api/Kraken.hpp"
+#include "providers/twitch/TwitchUser.hpp"
+#include "util/SharedPtrElementLess.hpp"
 
 namespace chatterino {
 
@@ -16,9 +19,12 @@ TwitchAccountManager::TwitchAccountManager()
     this->currentUserChanged.connect([this] {
         auto currentUser = this->getCurrent();
         currentUser->loadBlocks();
+        currentUser->loadSeventvUserID();
     });
 
-    this->accounts.itemRemoved.connect([this](const auto &acc) {
+    // We can safely ignore this signal connection since accounts will always be removed
+    // before TwitchAccountManager
+    std::ignore = this->accounts.itemRemoved.connect([this](const auto &acc) {
         this->removeUser(acc.item.get());
     });
 }
@@ -120,7 +126,7 @@ void TwitchAccountManager::reloadUsers()
                     qCDebug(chatterinoTwitch)
                         << "It was the current user, so we need to "
                            "reconnect stuff!";
-                    this->currentUserChanged.invoke();
+                    this->currentUserChanged();
                 }
             }
             break;
@@ -140,6 +146,11 @@ void TwitchAccountManager::reloadUsers()
 
 void TwitchAccountManager::load()
 {
+    if (getApp()->getArgs().initialLogin.has_value())
+    {
+        this->currentUsername = getApp()->getArgs().initialLogin.value();
+    }
+
     this->reloadUsers();
 
     this->currentUsername.connect([this](const QString &newUsername) {
@@ -149,7 +160,6 @@ void TwitchAccountManager::load()
             qCDebug(chatterinoTwitch)
                 << "Twitch user updated to" << newUsername;
             getHelix()->update(user->getOAuthClient(), user->getOAuthToken());
-            getKraken()->update(user->getOAuthClient(), user->getOAuthToken());
             this->currentUser_ = user;
         }
         else
@@ -158,7 +168,8 @@ void TwitchAccountManager::load()
             this->currentUser_ = this->anonymousUser_;
         }
 
-        this->currentUserChanged.invoke();
+        this->currentUserChanged();
+        this->currentUser_->reloadEmotes();
     });
 }
 

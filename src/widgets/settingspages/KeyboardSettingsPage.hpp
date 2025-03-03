@@ -4,6 +4,9 @@
 
 namespace chatterino {
 
+class HotkeyModel;
+class EditableModelView;
+
 class KeyboardSettingsPage : public SettingsPage
 {
 public:

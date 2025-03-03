@@ -1,6 +1,12 @@
 #pragma once
 
-#include <QtGlobal>
+#include <QString>
+
+namespace chatterino::incognitobrowser::detail {
+
+QString getPrivateSwitch(const QString &browserExecutable);
+
+}  // namespace chatterino::incognitobrowser::detail
 
 namespace chatterino {
 
