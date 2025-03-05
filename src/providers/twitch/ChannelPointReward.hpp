@@ -1,26 +1,23 @@
 #pragma once
 
-#include "common/Aliases.hpp"
-#include "messages/Image.hpp"
 #include "messages/ImageSet.hpp"
 
-#include <rapidjson/document.h>
-
-#define TWITCH_CHANNEL_POINT_REWARD_URL(x)                                  \
-    QString("https://static-cdn.jtvnw.net/custom-reward-images/default-%1") \
-        .arg(x)
+#include <QJsonObject>
 
 namespace chatterino {
+
 struct ChannelPointReward {
-    ChannelPointReward(rapidjson::Value &reward);
+    ChannelPointReward(const QJsonObject &redemption);
     ChannelPointReward() = delete;
     QString id;
     QString channelId;
     QString title;
     int cost;
     ImageSet image;
-    bool hasParsedSuccessfully = false;
     bool isUserInputRequired = false;
+    bool isBits = false;
+    QString emoteId;    // currently only for celebrations
+    QString emoteName;  // currently only for celebrations
 
     struct {
         QString id;
@@ -28,8 +25,7 @@ struct ChannelPointReward {
         QString displayName;
     } user;
 
-private:
-    void parseUser(rapidjson::Value &user);
+    QJsonObject toJson() const;
 };
 
 }  // namespace chatterino

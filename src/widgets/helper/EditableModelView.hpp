@@ -1,8 +1,10 @@
 #pragma once
 
+#include <pajlada/signals/signal.hpp>
+#include <QKeySequence>
 #include <QWidget>
 
-#include <pajlada/signals/signal.hpp>
+#include <span>
 
 class QAbstractTableModel;
 class QTableView;
@@ -16,6 +18,7 @@ public:
     EditableModelView(QAbstractTableModel *model, bool movable = true);
 
     void setTitles(std::initializer_list<QString> titles);
+    void setValidationRegexp(QRegularExpression regexp);
 
     QTableView *getTableView();
     QAbstractTableModel *getModel();
@@ -25,13 +28,16 @@ public:
     void addCustomButton(QWidget *widget);
     void addRegexHelpLink();
 
+    bool filterSearchResults(const QString &query,
+                             std::span<const int> columnSelect);
+    void filterSearchResultsHotkey(const QKeySequence &keySequenceQuery);
+
 private:
     QTableView *tableView_{};
     QAbstractTableModel *model_{};
     QHBoxLayout *buttons_{};
 
     void moveRow(int dir);
-    void selectRow(int row);
 };
 
 }  // namespace chatterino

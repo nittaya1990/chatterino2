@@ -21,17 +21,17 @@ public:
     Icon getIcon() const;
 
 protected:
-    virtual void themeChangedEvent() override;
-    virtual void paintEvent(QPaintEvent *) override;
-    virtual void mouseReleaseEvent(QMouseEvent *) override;
-    virtual void dragEnterEvent(QDragEnterEvent *) override;
-    virtual void dragLeaveEvent(QDragLeaveEvent *) override;
-    virtual void dropEvent(QDropEvent *) override;
+    void themeChangedEvent() override;
+    void paintEvent(QPaintEvent *) override;
+    void mouseReleaseEvent(QMouseEvent *) override;
+    void dragEnterEvent(QDragEnterEvent *) override;
+    void dragLeaveEvent(QDragLeaveEvent *) override;
+    void dropEvent(QDropEvent *) override;
 
-    virtual void hideEvent(QHideEvent *) override;
-    virtual void showEvent(QShowEvent *) override;
+    void hideEvent(QHideEvent *) override;
+    void showEvent(QShowEvent *) override;
 
-signals:
+Q_SIGNALS:
     void leftClicked();
 
 private:

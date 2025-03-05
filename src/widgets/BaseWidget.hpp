@@ -1,9 +1,11 @@
 #pragma once
 
-#include <QWidget>
-#include <boost/optional.hpp>
 #include <pajlada/signals/signal.hpp>
 #include <pajlada/signals/signalholder.hpp>
+#include <QShortcut>
+#include <QWidget>
+
+#include <optional>
 
 namespace chatterino {
 
@@ -21,8 +23,8 @@ public:
     virtual float scale() const;
     pajlada::Signals::Signal<float> scaleChanged;
 
-    boost::optional<float> overrideScale() const;
-    void setOverrideScale(boost::optional<float>);
+    std::optional<float> overrideScale() const;
+    void setOverrideScale(std::optional<float>);
 
     QSize scaleIndependantSize() const;
     int scaleIndependantWidth() const;
@@ -32,29 +34,34 @@ public:
     void setScaleIndependantWidth(int value);
     void setScaleIndependantHeight(int value);
 
-    float qtFontScale() const;
-
 protected:
-    virtual void childEvent(QChildEvent *) override;
-    virtual void showEvent(QShowEvent *) override;
+    void childEvent(QChildEvent *) override;
+    void showEvent(QShowEvent *) override;
 
     virtual void scaleChangedEvent(float newScale);
     virtual void themeChangedEvent();
+    [[deprecated("addShortcuts called without overriding it")]] virtual void
+        addShortcuts()
+    {
+    }
 
     void setScale(float value);
 
     Theme *theme;
 
+    std::vector<QShortcut *> shortcuts_;
+    void clearShortcuts();
+    pajlada::Signals::SignalHolder signalHolder_;
+
 private:
     float scale_{1.f};
-    boost::optional<float> overrideScale_;
+    std::optional<float> overrideScale_;
     QSize scaleIndependantSize_;
 
     std::vector<BaseWidget *> widgets_;
 
-    pajlada::Signals::SignalHolder signalHolder_;
-
     friend class BaseWindow;
+    friend class OverlayWindow;  // for setScale()
 };
 
 }  // namespace chatterino
