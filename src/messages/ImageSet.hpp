@@ -1,15 +1,24 @@
 #pragma once
 
-#include "messages/Image.hpp"
+#include "common/Aliases.hpp"
+
+#include <memory>
+
+class QJsonObject;
 
 namespace chatterino {
+
+class Image;
+using ImagePtr = std::shared_ptr<Image>;
+ImagePtr getEmptyImagePtr();
 
 class ImageSet
 {
 public:
     ImageSet();
-    ImageSet(const ImagePtr &image1, const ImagePtr &image2 = Image::getEmpty(),
-             const ImagePtr &image3 = Image::getEmpty());
+    ImageSet(const ImagePtr &image1,
+             const ImagePtr &image2 = getEmptyImagePtr(),
+             const ImagePtr &image3 = getEmptyImagePtr());
     ImageSet(const Url &image1, const Url &image2 = {}, const Url &image3 = {});
 
     void setImage1(const ImagePtr &image);
@@ -26,6 +35,8 @@ public:
 
     bool operator==(const ImageSet &other) const;
     bool operator!=(const ImageSet &other) const;
+
+    QJsonObject toJson() const;
 
 private:
     ImagePtr imageX1_;

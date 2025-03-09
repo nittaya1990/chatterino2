@@ -1,93 +1,54 @@
 #pragma once
 
-#include "common/Aliases.hpp"
 #include "common/Atomic.hpp"
-#include "common/Channel.hpp"
 #include "common/UniqueAccess.hpp"
 #include "controllers/accounts/Account.hpp"
 #include "messages/Emote.hpp"
+#include "providers/twitch/TwitchEmotes.hpp"
 #include "providers/twitch/TwitchUser.hpp"
+#include "util/CancellationToken.hpp"
 #include "util/QStringHash.hpp"
 
-#include <rapidjson/document.h>
+#include <boost/unordered/unordered_flat_map_fwd.hpp>
+#include <pajlada/signals.hpp>
 #include <QColor>
 #include <QElapsedTimer>
+#include <QObject>
 #include <QString>
+#include <rapidjson/document.h>
 
 #include <functional>
 #include <mutex>
-#include <set>
+#include <unordered_set>
 
 namespace chatterino {
 
-enum FollowResult {
-    FollowResult_Following,
-    FollowResult_NotFollowing,
-    FollowResult_Failed,
-};
-
-struct TwitchEmoteSetResolverResponse {
-    const QString channelName;
-    const QString channelId;
-    const QString type;
-    const int tier;
-    const bool isCustom;
-    // Example response:
-    //    {
-    //      "channel_name": "zneix",
-    //      "channel_id": "99631238",
-    //      "type": "",
-    //      "tier": 1,
-    //      "custom": false
-    //    }
-
-    TwitchEmoteSetResolverResponse(QJsonObject jsonObject)
-        : channelName(jsonObject.value("channel_name").toString())
-        , channelId(jsonObject.value("channel_id").toString())
-        , type(jsonObject.value("type").toString())
-        , tier(jsonObject.value("tier").toInt())
-        , isCustom(jsonObject.value("custom").toBool())
-    {
-    }
-};
-
-std::vector<QStringList> getEmoteSetBatches(QStringList emoteSetKeys);
+class Channel;
+using ChannelPtr = std::shared_ptr<Channel>;
 
 class TwitchAccount : public Account
 {
 public:
-    struct TwitchEmote {
-        EmoteId id;
-        EmoteName name;
-    };
-
-    struct EmoteSet {
-        QString key;
-        QString channelName;
-        QString text;
-        bool local{false};
-        std::vector<TwitchEmote> emotes;
-    };
-
-    std::map<QString, EmoteSet> staticEmoteSets;
-
-    struct TwitchAccountEmoteData {
-        std::vector<std::shared_ptr<EmoteSet>> emoteSets;
-
-        // this EmoteMap should contain all emotes available globally
-        // excluding locally available emotes, such as follower ones
-        EmoteMap emotes;
-    };
-
     TwitchAccount(const QString &username, const QString &oauthToken_,
                   const QString &oauthClient_, const QString &_userID);
+    ~TwitchAccount() override;
+    TwitchAccount(const TwitchAccount &) = delete;
+    TwitchAccount(TwitchAccount &&) = delete;
+    TwitchAccount &operator=(const TwitchAccount &) = delete;
+    TwitchAccount &operator=(TwitchAccount &&) = delete;
 
-    virtual QString toString() const override;
+    QString toString() const override;
 
     const QString &getUserName() const;
     const QString &getOAuthToken() const;
     const QString &getOAuthClient() const;
     const QString &getUserId() const;
+
+    /**
+     * The Seventv user-id of the current user. 
+     * Empty if there's no associated Seventv user with this twitch user.
+     */
+    const QString &getSeventvUserID() const;
 
     QColor color();
     void setColor(QColor color);
@@ -103,33 +64,50 @@ public:
     bool isAnon() const;
 
     void loadBlocks();
-    void blockUser(QString userId, std::function<void()> onSuccess,
+    void blockUser(const QString &userId, const QObject *caller,
+                   std::function<void()> onSuccess,
                    std::function<void()> onFailure);
-    void unblockUser(QString userId, std::function<void()> onSuccess,
+    void unblockUser(const QString &userId, const QObject *caller,
+                     std::function<void()> onSuccess,
                      std::function<void()> onFailure);
 
-    SharedAccessGuard<const std::set<QString>> accessBlockedUserIds() const;
-    SharedAccessGuard<const std::set<TwitchUser>> accessBlocks() const;
+    void blockUserLocally(const QString &userID);
 
-    void loadEmotes(std::weak_ptr<Channel> weakChannel = {});
-    // loadUserstateEmotes loads emote sets that are part of the USERSTATE emote-sets key
-    // this function makes sure not to load emote sets that have already been loaded
-    void loadUserstateEmotes(std::function<void()> callback);
-    // setUserStateEmoteSets sets the emote sets that were parsed from the USERSTATE emote-sets key
-    // Returns true if the newly inserted emote sets differ from the ones previously saved
-    [[nodiscard]] bool setUserstateEmoteSets(QStringList newEmoteSets);
-    SharedAccessGuard<const TwitchAccountEmoteData> accessEmotes() const;
-    SharedAccessGuard<const std::unordered_map<QString, EmoteMap>>
-        accessLocalEmotes() const;
+    [[nodiscard]] const std::unordered_set<TwitchUser> &blocks() const;
+    [[nodiscard]] const std::unordered_set<QString> &blockedUserIds() const;
 
     // Automod actions
     void autoModAllow(const QString msgID, ChannelPtr channel);
     void autoModDeny(const QString msgID, ChannelPtr channel);
 
-private:
-    void loadKrakenEmotes();
-    void loadEmoteSetData(std::shared_ptr<EmoteSet> emoteSet);
+    void loadSeventvUserID();
 
+    /// Returns true if the account has access to the given emote set
+    bool hasEmoteSet(const EmoteSetId &id) const;
+
+    /// Returns a map of emote sets the account has access to
+    ///
+    /// Key being the emote set ID, and contents being information about the emote set
+    /// and the emotes contained in the emote set
+    SharedAccessGuard<std::shared_ptr<const TwitchEmoteSetMap>>
+        accessEmoteSets() const;
+
+    /// Returns a map of emotes the account has access to
+    SharedAccessGuard<std::shared_ptr<const EmoteMap>> accessEmotes() const;
+
+    /// Sets the emotes this account has access to
+    ///
+    /// This should only be used in tests.
+    void setEmotes(std::shared_ptr<const EmoteMap> emotes);
+
+    /// Return the emote by emote name if the account has access to the emote
+    std::optional<EmotePtr> twitchEmote(const EmoteName &name) const;
+
+    /// Once emotes are reloaded, TwitchAccountManager::emotesReloaded is
+    /// invoked with @a caller and an optional error.
+    void reloadEmotes(void *caller = nullptr);
+
+private:
     QString oauthClient_;
     QString oauthToken_;
     QString userName_;
@@ -137,14 +115,17 @@ private:
     const bool isAnon_;
     Atomic<QColor> color_;
 
-    mutable std::mutex ignoresMutex_;
     QStringList userstateEmoteSets_;
-    UniqueAccess<std::set<TwitchUser>> ignores_;
-    UniqueAccess<std::set<QString>> ignoresUserIds_;
 
-    //    std::map<UserId, TwitchAccountEmoteData> emotes;
-    UniqueAccess<TwitchAccountEmoteData> emotes_;
-    UniqueAccess<std::unordered_map<QString, EmoteMap>> localEmotes_;
+    ScopedCancellationToken blockToken_;
+    std::unordered_set<TwitchUser> ignores_;
+    std::unordered_set<QString> ignoresUserIds_;
+
+    ScopedCancellationToken emoteToken_;
+    UniqueAccess<std::shared_ptr<const TwitchEmoteSetMap>> emoteSets_;
+    UniqueAccess<std::shared_ptr<const EmoteMap>> emotes_;
+
+    QString seventvUserID_;
 };
 
 }  // namespace chatterino

@@ -2,11 +2,13 @@
 
 #include "common/Aliases.hpp"
 #include "common/Channel.hpp"
-#include "common/NullablePtr.hpp"
-#include "pajlada/signals/signalholder.hpp"
 #include "widgets/BaseWidget.hpp"
+#include "widgets/splits/SplitCommon.hpp"
 
+#include <boost/signals2.hpp>
+#include <pajlada/signals/signalholder.hpp>
 #include <QFont>
+#include <QPointer>
 #include <QShortcut>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -19,6 +21,7 @@ class SplitInput;
 class SplitContainer;
 class SplitOverlay;
 class SelectChannelDialog;
+class OverlayWindow;
 
 // Each ChatWidget consists of three sub-elements that handle their own part of
 // the chat widget: ChatWidgetHeader
@@ -31,7 +34,7 @@ class SelectChannelDialog;
 //   - Responsible for rendering and handling user text input
 //
 // Each sub-element has a reference to the parent Chat Widget
-class Split : public BaseWidget, pajlada::Signals::SignalHolder
+class Split : public BaseWidget
 {
     friend class SplitInput;
 
@@ -50,7 +53,7 @@ public:
     SplitInput &getInput();
 
     IndirectChannel getIndirectChannel();
-    ChannelPtr getChannel();
+    ChannelPtr getChannel() const;
     void setChannel(IndirectChannel newChannel);
 
     void setFilters(const QList<QUuid> ids);
@@ -63,8 +66,6 @@ public:
 
     void showChangeChannelPopup(const char *dialogTitle, bool empty,
                                 std::function<void(bool)> callback);
-    void giveFocus(Qt::FocusReason reason);
-    bool hasFocus() const;
     void updateGifEmotes();
     void updateLastReadMessage();
     void setIsTopRightSplit(bool value);
@@ -74,6 +75,13 @@ public:
     bool isInContainer() const;
 
     void setContainer(SplitContainer *container);
+
+    void setInputReply(const MessagePtr &reply);
+
+    // This is called on window focus lost
+    void unpause();
+
+    OverlayWindow *overlayWindow();
 
     static pajlada::Signals::Signal<Qt::KeyboardModifiers>
         modifierStatusChanged;
@@ -94,8 +102,7 @@ public:
     pajlada::Signals::Signal<Action> actionRequested;
     pajlada::Signals::Signal<ChannelPtr> openSplitRequested;
 
-    // args: (SplitContainer::Direction dir, Split* parent)
-    pajlada::Signals::Signal<int, Split *> insertSplitRequested;
+    pajlada::Signals::Signal<SplitDirection, Split *> insertSplitRequested;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -103,9 +110,12 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
-    void enterEvent(QEvent *event) override;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    void enterEvent(QEnterEvent * /*event*/) override;
+#else
+    void enterEvent(QEvent * /*event*/) override;
+#endif
     void leaveEvent(QEvent *event) override;
-    void focusInEvent(QFocusEvent *event) override;
 
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -114,19 +124,28 @@ private:
     void channelNameUpdated(const QString &newChannelName);
     void handleModifiers(Qt::KeyboardModifiers modifiers);
     void updateInputPlaceholder();
+    void addShortcuts() override;
 
     /**
-     * @brief Opens twitch channel stream in a browser player (opens a formatted link)
+     * @brief Opens Twitch channel stream in a browser player (opens a formatted link)
      */
     void openChannelInBrowserPlayer(ChannelPtr channel);
     /**
-     * @brief Opens twitch channel stream in streamlink app (if stream is live and streamlink is installed)
+     * @brief Opens Twitch channel stream in streamlink app (if stream is live and streamlink is installed)
      */
-    void openChannelInStreamlink(QString channelName);
+    void openChannelInStreamlink(const QString channelName);
     /**
-     * @brief Opens twitch channel chat in a new chatterino tab
+     * @brief Opens Twitch channel chat in a new Chatterino tab
      */
     void joinChannelInNewTab(ChannelPtr channel);
+
+    /**
+     * @brief Refresh moderation mode layouts/buttons
+     *
+     * Should be called after after the moderation mode is changed or
+     * moderation actions have been changed
+     **/
+    void refreshModerationMode();
 
     IndirectChannel channel_;
 
@@ -136,30 +155,36 @@ private:
     bool isMouseOver_{};
     bool isDragging_{};
 
-    QVBoxLayout *vbox_;
-    SplitHeader *header_;
-    ChannelView *view_;
-    SplitInput *input_;
-    SplitOverlay *overlay_;
+    QVBoxLayout *const vbox_;
+    SplitHeader *const header_;
+    ChannelView *const view_;
+    SplitInput *const input_;
+    SplitOverlay *const overlay_;
 
-    NullablePtr<SelectChannelDialog> selectChannelDialog_;
+    QPointer<OverlayWindow> overlayWindow_;
+
+    QPointer<SelectChannelDialog> selectChannelDialog_;
 
     pajlada::Signals::Connection channelIDChangedConnection_;
     pajlada::Signals::Connection usermodeChangedConnection_;
     pajlada::Signals::Connection roomModeChangedConnection_;
 
     pajlada::Signals::Connection indirectChannelChangedConnection_;
+
+    // This signal-holder is cleared whenever this split changes the underlying channel
+    pajlada::Signals::SignalHolder channelSignalHolder_;
+
     pajlada::Signals::SignalHolder signalHolder_;
+    std::vector<boost::signals2::scoped_connection> bSignals_;
 
-    std::vector<pajlada::Signals::ScopedConnection> managedConnections_;
-
-public slots:
+public Q_SLOTS:
     void addSibling();
     void deleteFromContainer();
     void changeChannel();
     void explainMoving();
     void explainSplitting();
     void popup();
+    void showOverlayWindow();
     void clear();
     void openInBrowser();
     void openModViewInBrowser();
@@ -167,13 +192,15 @@ public slots:
     void openBrowserPlayer();
     void openInStreamlink();
     void openWithCustomScheme();
-    void copyToClipboard();
     void setFiltersDialog();
-    void showSearch();
-    void showViewerList();
+    void showSearch(bool singleChannel);
+    void showChatterList();
     void openSubPage();
     void reloadChannelAndSubscriberEmotes();
     void reconnect();
 };
 
 }  // namespace chatterino
+
+QDebug operator<<(QDebug dbg, const chatterino::Split &split);
+QDebug operator<<(QDebug dbg, const chatterino::Split *split);

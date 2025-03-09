@@ -1,7 +1,10 @@
-#include "ChannelChatters.hpp"
+#include "common/ChannelChatters.hpp"
 
+#include "common/Channel.hpp"
 #include "messages/Message.hpp"
 #include "messages/MessageBuilder.hpp"
+
+#include <QColor>
 
 namespace chatterino {
 
@@ -33,12 +36,15 @@ void ChannelChatters::addJoinedUser(const QString &user)
 
         QTimer::singleShot(500, &this->lifetimeGuard_, [this] {
             auto joinedUsers = this->joinedUsers_.access();
+            joinedUsers->sort();
 
-            MessageBuilder builder(systemMessage,
-                                   "Users joined: " + joinedUsers->join(", "));
-            builder->flags.set(MessageFlag::Collapsed);
+            this->channel_.addMessage(
+                MessageBuilder::makeListOfUsersMessage(
+                    "Users joined:", *joinedUsers, &this->channel_,
+                    {MessageFlag::Collapsed}),
+                MessageContext::Original);
+
             joinedUsers->clear();
-            this->channel_.addMessage(builder.release());
             this->joinedUsersMergeQueued_ = false;
         });
     }
@@ -55,23 +61,25 @@ void ChannelChatters::addPartedUser(const QString &user)
 
         QTimer::singleShot(500, &this->lifetimeGuard_, [this] {
             auto partedUsers = this->partedUsers_.access();
+            partedUsers->sort();
 
-            MessageBuilder builder(systemMessage,
-                                   "Users parted: " + partedUsers->join(", "));
-            builder->flags.set(MessageFlag::Collapsed);
-            this->channel_.addMessage(builder.release());
+            this->channel_.addMessage(
+                MessageBuilder::makeListOfUsersMessage(
+                    "Users parted:", *partedUsers, &this->channel_,
+                    {MessageFlag::Collapsed}),
+                MessageContext::Original);
+
             partedUsers->clear();
-
             this->partedUsersMergeQueued_ = false;
         });
     }
 }
 
 void ChannelChatters::updateOnlineChatters(
-    const std::unordered_set<QString> &chatters)
+    const std::unordered_set<QString> &usernames)
 {
-    auto chatters_ = this->chatters_.access();
-    chatters_->updateOnlineChatters(chatters);
+    auto chatters = this->chatters_.access();
+    chatters->updateOnlineChatters(usernames);
 }
 
 size_t ChannelChatters::colorsSize() const

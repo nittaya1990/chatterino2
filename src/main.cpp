@@ -1,22 +1,34 @@
-#include <QApplication>
-#include <QCommandLineParser>
-#include <QMessageBox>
-#include <QStringList>
-#include <memory>
-
 #include "BrowserExtension.hpp"
-#include "RunGui.hpp"
 #include "common/Args.hpp"
+#include "common/Env.hpp"
 #include "common/Modes.hpp"
 #include "common/QLogging.hpp"
 #include "common/Version.hpp"
 #include "providers/IvrApi.hpp"
+#include "providers/NetworkConfigurationProvider.hpp"
 #include "providers/twitch/api/Helix.hpp"
-#include "providers/twitch/api/Kraken.hpp"
+#include "RunGui.hpp"
+#include "singletons/CrashHandler.hpp"
 #include "singletons/Paths.hpp"
 #include "singletons/Settings.hpp"
+#include "singletons/Updates.hpp"
 #include "util/AttachToConsole.hpp"
-#include "util/IncognitoBrowser.hpp"
+#include "util/IpcQueue.hpp"
+
+#ifdef Q_OS_MACOS
+#    include "util/MacOsHelpers.h"
+#endif
+
+#include <QApplication>
+#include <QCommandLineParser>
+#include <QMessageBox>
+#include <QSslSocket>
+#include <QStringList>
+#ifdef Q_OS_WIN
+#    include <shobjidl_core.h>
+#endif
+
+#include <memory>
 
 using namespace chatterino;
 
@@ -26,26 +38,32 @@ int main(int argc, char **argv)
 
     QCoreApplication::setApplicationName("chatterino");
     QCoreApplication::setApplicationVersion(CHATTERINO_VERSION);
-    QCoreApplication::setOrganizationDomain("https://www.chatterino.com");
+    QCoreApplication::setOrganizationDomain("chatterino.com");
+#ifdef Q_OS_WIN
+    SetCurrentProcessExplicitAppUserModelID(L"ChatterinoTeam.Chatterino");
+#endif
 
-    Paths *paths{};
+    std::unique_ptr<Paths> paths;
 
     try
     {
-        paths = new Paths;
+        paths = std::make_unique<Paths>();
     }
     catch (std::runtime_error &error)
     {
         QMessageBox box;
         if (Modes::instance().isPortable)
         {
-            box.setText(
+            auto errorMessage =
                 error.what() +
                 QStringLiteral(
                     "\n\nInfo: Portable mode requires the application to "
                     "be in a writeable location. If you don't want "
                     "portable mode reinstall the application. "
-                    "https://chatterino.com."));
+                    "https://chatterino.com.");
+            std::cerr << errorMessage.toLocal8Bit().constData() << '\n';
+            std::cerr.flush();
+            box.setText(errorMessage);
         }
         else
         {
@@ -54,40 +72,72 @@ int main(int argc, char **argv)
         box.exec();
         return 1;
     }
+    ipc::initPaths(paths.get());
 
-    initArgs(a);
+    const Args args(a, *paths);
+
+#ifdef CHATTERINO_WITH_CRASHPAD
+    const auto crashpadHandler = installCrashHandler(args, *paths);
+#endif
 
     // run in gui mode or browser extension host mode
-    if (getArgs().shouldRunBrowserExtensionHost)
+    if (args.shouldRunBrowserExtensionHost)
     {
+#ifdef Q_OS_MACOS
+        ::chatterinoSetMacOsActivationPolicyProhibited();
+#endif
         runBrowserExtensionHost();
     }
-    else if (getArgs().printVersion)
+    else if (args.printVersion)
     {
         attachToConsole();
 
         auto version = Version::instance();
-        qInfo().noquote() << QString("%1 (commit %2%3)")
-                                 .arg(version.fullVersion())
-                                 .arg(version.commitHash())
-                                 .arg(Modes::instance().isNightly
-                                          ? ", " + version.dateOfBuild()
-                                          : "");
+        auto versionMessage =
+            QString("%1 (commit %2%3)")
+                .arg(version.fullVersion())
+                .arg(version.commitHash())
+                .arg(Modes::instance().isNightly ? ", " + version.dateOfBuild()
+                                                 : "");
+        std::cout << versionMessage.toLocal8Bit().constData() << '\n';
+        std::cout.flush();
     }
     else
     {
-        if (getArgs().verbose)
+        if (args.verbose)
         {
             attachToConsole();
         }
 
+        qCInfo(chatterinoApp).noquote()
+            << "Chatterino Qt SSL library build version:"
+            << QSslSocket::sslLibraryBuildVersionString();
+        qCInfo(chatterinoApp).noquote()
+            << "Chatterino Qt SSL library version:"
+            << QSslSocket::sslLibraryVersionString();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 1, 0)
+        qCInfo(chatterinoApp).noquote()
+            << "Chatterino Qt SSL active backend:"
+            << QSslSocket::activeBackend() << "of"
+            << QSslSocket::availableBackends().join(", ");
+#    if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+        qCInfo(chatterinoApp) << "Chatterino Qt SSL active backend features:"
+                              << QSslSocket::supportedFeatures();
+#    endif
+        qCInfo(chatterinoApp) << "Chatterino Qt SSL active backend protocols:"
+                              << QSslSocket::supportedProtocols();
+#endif
+
+        Settings settings(args, paths->settingsDirectory);
+
+        Updates updates(*paths, settings);
+
+        NetworkConfigurationProvider::applyFromEnv(Env::get());
+
         IvrApi::initialize();
         Helix::initialize();
-        Kraken::initialize();
 
-        Settings settings(paths->settingsDirectory);
-
-        runGui(a, *paths, settings);
+        runGui(a, *paths, settings, args, updates);
     }
     return 0;
 }

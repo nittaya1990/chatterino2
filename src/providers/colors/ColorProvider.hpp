@@ -1,9 +1,10 @@
 #pragma once
 
+#include <QColor>
+
 #include <memory>
 #include <unordered_map>
-
-#include <QColor>
+#include <vector>
 
 namespace chatterino {
 
@@ -11,7 +12,13 @@ enum class ColorType {
     SelfHighlight,
     Subscription,
     Whisper,
-    RedeemedHighlight
+    RedeemedHighlight,
+    FirstMessageHighlight,
+    ElevatedMessageHighlight,
+    ThreadMessageHighlight,
+    // Used in automatic highlights of your own messages
+    SelfMessageHighlight,
+    AutomodHighlight,
 };
 
 class ColorProvider
@@ -30,9 +37,7 @@ public:
      * of already parsed predefined (self highlights, subscriptions,
      * and whispers) highlights.
      */
-    const std::shared_ptr<QColor> color(ColorType type) const;
-
-    void updateColor(ColorType type, QColor color);
+    std::shared_ptr<QColor> color(ColorType type) const;
 
     /**
      * @brief Return a set of recently used colors used anywhere in Chatterino.

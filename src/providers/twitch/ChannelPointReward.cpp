@@ -1,130 +1,140 @@
-#include "ChannelPointReward.hpp"
-#include "common/QLogging.hpp"
-#include "util/RapidjsonHelpers.hpp"
+#include "providers/twitch/ChannelPointReward.hpp"
+
+#include "common/Literals.hpp"
+#include "messages/Image.hpp"
+
+#include <QStringBuilder>
+
+namespace {
+
+QString twitchChannelPointRewardUrl(const QString &file)
+{
+    return u"https://static-cdn.jtvnw.net/custom-reward-images/default-" % file;
+}
+
+}  // namespace
 
 namespace chatterino {
 
-QString parseRewardImage(const rapidjson::Value &obj, const char *key,
-                         bool &result)
+using namespace literals;
+
+ChannelPointReward::ChannelPointReward(const QJsonObject &redemption)
 {
-    QString url;
-    if (!(result = rj::getSafe(obj, key, url)))
+    auto reward = redemption.value("reward").toObject();
+
+    this->id = reward.value("id").toString();
+    this->channelId = reward.value("channel_id").toString();
+    this->title = reward.value("title").toString();
+    this->cost = reward.value("cost").toInt();
+    this->isUserInputRequired = reward.value("is_user_input_required").toBool();
+    this->isBits = reward.value("pricing_type").toString() == "BITS";
+
+    // accommodate idiosyncrasies of automatic reward redemptions
+    const auto rewardType = reward.value("reward_type").toString();
+    if (rewardType == "SEND_ANIMATED_MESSAGE")
     {
-        qCDebug(chatterinoTwitch)
-            << "No url value found for key in reward image object:" << key;
-        return "";
+        this->id = "animated-message";
+        this->isUserInputRequired = true;
+        this->title = "Message Effects";
+    }
+    else if (rewardType == "SEND_GIGANTIFIED_EMOTE")
+    {
+        this->id = "gigantified-emote-message";
+        this->isUserInputRequired = true;
+        this->title = "Gigantify an Emote";
+    }
+    else if (rewardType == "CELEBRATION")
+    {
+        this->id = rewardType;
+        this->title = "On-Screen Celebration";
+        const auto metadata =
+            redemption.value("redemption_metadata").toObject();
+        const auto emote = metadata.value("celebration_emote_metadata")
+                               .toObject()
+                               .value("emote")
+                               .toObject();
+        this->emoteId = emote.value("id").toString();
+        this->emoteName = emote.value("token").toString();
     }
 
-    return url;
-}
-
-ChannelPointReward::ChannelPointReward(rapidjson::Value &redemption)
-{
-    rapidjson::Value user;
-    if (!(this->hasParsedSuccessfully =
-              rj::getSafeObject(redemption, "user", user)))
+    // use bits cost when channel points were not used
+    if (cost == 0)
     {
-        qCDebug(chatterinoTwitch) << "No user info found for redemption";
-        return;
+        this->cost = reward.value("bits_cost").toInt();
     }
 
-    rapidjson::Value reward;
-    if (!(this->hasParsedSuccessfully =
-              rj::getSafeObject(redemption, "reward", reward)))
+    // workaround twitch bug where bits_cost is always 0 in practice
+    if (cost == 0)
     {
-        qCDebug(chatterinoTwitch) << "No reward info found for redemption";
-        return;
-    }
-
-    if (!(this->hasParsedSuccessfully = rj::getSafe(reward, "id", this->id)))
-    {
-        qCDebug(chatterinoTwitch) << "No id found for reward";
-        return;
-    }
-
-    if (!(this->hasParsedSuccessfully =
-              rj::getSafe(reward, "channel_id", this->channelId)))
-    {
-        qCDebug(chatterinoTwitch) << "No channel_id found for reward";
-        return;
-    }
-
-    if (!(this->hasParsedSuccessfully =
-              rj::getSafe(reward, "title", this->title)))
-    {
-        qCDebug(chatterinoTwitch) << "No title found for reward";
-        return;
-    }
-
-    if (!(this->hasParsedSuccessfully =
-              rj::getSafe(reward, "cost", this->cost)))
-    {
-        qCDebug(chatterinoTwitch) << "No cost found for reward";
-        return;
-    }
-
-    if (!(this->hasParsedSuccessfully = rj::getSafe(
-              reward, "is_user_input_required", this->isUserInputRequired)))
-    {
-        qCDebug(chatterinoTwitch)
-            << "No information if user input is required found for reward";
-        return;
+        this->cost = reward.value("default_bits_cost").toInt();
     }
 
     // We don't need to store user information for rewards with user input
     // because we will get the user info from a corresponding IRC message
     if (!this->isUserInputRequired)
     {
-        this->parseUser(user);
+        auto user = redemption.value("user").toObject();
+
+        this->user.id = user.value("id").toString();
+        this->user.login = user.value("login").toString();
+        this->user.displayName = user.value("display_name").toString();
     }
 
-    rapidjson::Value obj;
-    if (rj::getSafeObject(reward, "image", obj) && !obj.IsNull() &&
-        obj.IsObject())
+    auto imageValue = reward.value("image");
+
+    // automatic reward redemptions have specialized default images
+    if (imageValue.isNull() && this->isBits)
     {
+        imageValue = reward.value("default_image");
+    }
+
+    // From Twitch docs
+    // The size is only an estimation, the actual size might vary.
+    constexpr QSize baseSize(28, 28);
+
+    if (imageValue.isObject())
+    {
+        auto imageObject = imageValue.toObject();
         this->image = ImageSet{
-            Image::fromUrl(
-                {parseRewardImage(obj, "url_1x", this->hasParsedSuccessfully)},
-                1),
-            Image::fromUrl(
-                {parseRewardImage(obj, "url_2x", this->hasParsedSuccessfully)},
-                0.5),
-            Image::fromUrl(
-                {parseRewardImage(obj, "url_4x", this->hasParsedSuccessfully)},
-                0.25),
+            Image::fromUrl({imageObject.value("url_1x").toString()}, 1,
+                           baseSize),
+            Image::fromUrl({imageObject.value("url_2x").toString()}, 0.5,
+                           baseSize * 2),
+            Image::fromUrl({imageObject.value("url_4x").toString()}, 0.25,
+                           baseSize * 4),
         };
     }
     else
     {
         static const ImageSet defaultImage{
-            Image::fromUrl({TWITCH_CHANNEL_POINT_REWARD_URL("1.png")}, 1),
-            Image::fromUrl({TWITCH_CHANNEL_POINT_REWARD_URL("2.png")}, 0.5),
-            Image::fromUrl({TWITCH_CHANNEL_POINT_REWARD_URL("4.png")}, 0.25)};
+            Image::fromUrl({twitchChannelPointRewardUrl("1.png")}, 1, baseSize),
+            Image::fromUrl({twitchChannelPointRewardUrl("2.png")}, 0.5,
+                           baseSize * 2),
+            Image::fromUrl({twitchChannelPointRewardUrl("4.png")}, 0.25,
+                           baseSize * 4)};
         this->image = defaultImage;
     }
 }
 
-void ChannelPointReward::parseUser(rapidjson::Value &user)
+QJsonObject ChannelPointReward::toJson() const
 {
-    if (!(this->hasParsedSuccessfully = rj::getSafe(user, "id", this->user.id)))
-    {
-        qCDebug(chatterinoTwitch) << "No id found for user in reward";
-        return;
-    }
-
-    if (!(this->hasParsedSuccessfully =
-              rj::getSafe(user, "login", this->user.login)))
-    {
-        qCDebug(chatterinoTwitch) << "No login name found for user in reward";
-        return;
-    }
-
-    if (!(this->hasParsedSuccessfully =
-              rj::getSafe(user, "display_name", this->user.displayName)))
-    {
-        qCDebug(chatterinoTwitch) << "No display name found for user in reward";
-        return;
-    }
+    return {
+        {"id"_L1, this->id},
+        {"channelId"_L1, this->channelId},
+        {"title"_L1, this->title},
+        {"cost"_L1, this->cost},
+        {"image"_L1, this->image.toJson()},
+        {"isUserInputRequired"_L1, this->isUserInputRequired},
+        {"isBits"_L1, this->isBits},
+        {"emoteId"_L1, this->emoteId},
+        {"emoteName"_L1, this->emoteName},
+        {"user"_L1,
+         {{
+             {"id"_L1, this->user.id},
+             {"login"_L1, this->user.login},
+             {"displayName"_L1, this->user.displayName},
+         }}},
+    };
 }
 
 }  // namespace chatterino
